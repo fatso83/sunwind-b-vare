@@ -3,4 +3,4 @@
 
 # Run every 30 minutes and prevent output from being mailed
 # noop command tip found on http://serverfault.com/a/76137/72176
-*/30 * * * *    : Nye eksamensresultater;  ~carlerik/src/studweb/cronscript.sh --quiet
+*/30 * * * *    : Nye varer hos Sunwind;  ~carlerik/src/sundwind/cronscript.sh --quiet
