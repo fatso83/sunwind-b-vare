@@ -1,36 +1,17 @@
 # -*- coding: utf-8 -*-
-#
-# Program to alert you when your grades have arrived in StudWeb
-# @author Carl-Erik Kopseng <carlerik@ifi.uio.no>
-# @date June 20 2013
-#
-# See README.md for installation and usage examples
-# Also just testrun the program with `python studweb.py` to 
-# see options
-#
-# Inspired by studweb.py by Sindre Frøyn <sindrf@ifi.uio.no>, 2009
-#
-# It works by
-# - logging into studweb, 
-# - parsing the results 
-# - comparing those with the previously fetched results
-# - printing the difference to screen 
-# - writing the results page to file for later comparison
-##
 
 import requests, re, sys, os, datetime, codecs, stat
 from bs4 import BeautifulSoup
 from os.path import expanduser
 
 config = None
-studweb_hostname = None
 latest_html = None
 
 # The settings file
 home = expanduser("~")
-settings_file = home + '/.studweb.conf'
-data_file = home + '/.studweb.dat'
-error_file = home + '/.studweb.latest_error.html'
+settings_file = home + '/.sunwind.conf'
+data_file = home + '/.sunwind.dat'
+error_file = home + '/.sundwind.latest_error.html'
 
 example_config = """\
 ssn = 12345678901
@@ -129,10 +110,6 @@ class SubjectResult:
 
 class PageParser:
 
-    def __init__(self, term, expand_link_text):
-        self.semester_string = term
-        self.expand_link_text = expand_link_text
-
     def parse_page_with_expanded_link_section_for_logout_url(self, html_page):
         return find_bulleted_link(html_page, 'Logg ut')
 
@@ -143,8 +120,11 @@ class PageParser:
 
         return link[0]['href']
 
-    def parse_start_page_for_link_url_to_expand_link_section(self, start_page_html):
-        return find_bulleted_link(start_page_html, self.expand_link_text)
+    def parse_page_for_product_section(self, page_html):
+        soup = BeautifulSoup(page_html)
+        products = soup.find_all ("section", "products_container")[0]
+
+        return products;
 
     def parse_login_page_for_path_to_form_handler(self, login_html):
         soup = BeautifulSoup(login_html)
@@ -171,7 +151,7 @@ class PageParser:
 
 
     def parse_result_page_for_results(self, html):
-        """Parses result page and returns a list of the subject results
+        """Parses products page and returns a list of the products
 
         html - the html of the page containing the results
         """
@@ -182,47 +162,14 @@ class PageParser:
         soup = BeautifulSoup(html)
 
         # parse the results table
-        result_table = soup.table.table
-        headers = result_table.find_all("th")
+        products = soup.find_all("div", {"class": "product_item"})
+        assert len(products) > 0
 
-        index_lookup = {}
-        for s in [self.semester_string, 'Emnekode', 'Emnenavn', 'Resultat']:
-            hits = [i for i, th in enumerate(headers) if th.text.find(s) >= 0]
-            assert len(hits) > 0, "Did not find a header with the name %s" % s
-            index_lookup[s] = hits[0]
+        for product in products:
+            desc = product.find("div", "p_list_description")
+            print desc.h4.text.strip()
 
-        assert len(index_lookup.values()) == 4, 'Page layout has changed!'
-
-        # only find rows with non-blank subject code
-        relevant_trs = [tr
-                        for tr in result_table.find_all('tr')[1:-2]  # Skip the first row with headers
-                        for i, c in enumerate(tr.children)
-                        if i == index_lookup['Emnekode'] and c.text.strip()]
-
-        results = set()
-
-        for tr in relevant_trs:
-            tmp = {}
-            for i, c in enumerate(tr.find_all('td')):
-                if i in index_lookup.values():
-                    text = c.text.strip()
-                    if i == index_lookup['Emnekode']:
-                        tmp['code'] = text
-                    if i == index_lookup[self.semester_string]:
-                        tmp['semester'] = text
-                    if i == index_lookup['Emnenavn']:
-                        tmp['name'] = text
-                    if i == index_lookup['Resultat']:
-                        tmp['grade'] = text
-            try:
-                results.add(SubjectResult(
-                    tmp['code'], tmp['name'], tmp['grade'], tmp['semester']))
-            except KeyError as e:
-                print("En feil skjedde. Fortsetter ...")
-                print(e)
-                print(tr)
-
-        return results
+        return products 
 
 
 def is_unicode_str(s):
@@ -234,47 +181,10 @@ def is_unicode_str(s):
         return isinstance(s, unicode)
 
 
-def log_into_start_page(session, parser):
-    # user_agent = "User-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.110 Safari/537.36"
-    # extra_headers = { 'User-Agent' : user_agent }
-    # s.headers.update(extra_headers)
-    global studweb_hostname
-
-    studweb_hostname = config['studweb']
-    ssn = config['ssn']
-    pin_code = config['pin']
-
-    r = session.get(studweb_url())
-
-    form_values = parser.parse_login_page_for_form_values(r.content)
-    action = parser.parse_login_page_for_path_to_form_handler(r.content)
-
-    # start filling in the values
-    form_values['fodselsnr'] = ssn
-    form_values['pinkode'] = pin_code
-
-    # remove the field that says we need to get the pin by sms
-    form_values.pop('pinmail')
-
-    # set the submit action to be Logg inn
-    form_values['WOSubmitAction'] = "Logg inn"
-
-    r = session.post(studweb_url() + action,
-                     data=form_values,
-                     allow_redirects=True)
-
-    # Når innlogget, husk å logge ut
-    return r.content
-
-def studweb_url():
-    return 'https://' + config['studweb']
-
-def logout(session, parser, html_page):
-    if not html_page:
-        raise Exception("No html received")
-
-    logout_url = parser.parse_page_with_expanded_link_section_for_logout_url(html_page)
-    session.get(studweb_url() + logout_url)
+def open_page(session, parser):
+    r = requests.get("https://www.sunwind.no/Outlet/")
+    products_html = parser.parse_page_for_product_section(r.content);
+    return products_html;
 
 
 def check(find_result, error_msg, failing_html):
@@ -309,44 +219,9 @@ def latest_results(parser):
     session = requests.Session()  # The session object that persists cookies and default values across requests
     html = None
 
-    try:
-        login_page = log_into_start_page(session, parser)
-        try:
-            check(login_page,
-                  "Failed parsing start page for expand link section. Check the configuration settings at " + settings_file,
-                  login_page)
-        except Exception as e:
-            # try to get the error message
-            error_msg = BeautifulSoup(login_page).select("#alert-box ul li")
-            if error_msg:
-                print_error("Caught error when trying to log in: \n" + error_msg[0].get_text())
-                sys.exit(1)
-            else:
-                raise e
-
-        url = parser.parse_start_page_for_link_url_to_expand_link_section(login_page)
-
-        check(url, "Failed parsing start page for expand link section.", login_page)
-
-        html = session.get(studweb_url() + url).content
-
-        result_page_url = parser.parse_page_with_expanded_link_section_for_results_url(html)
-
-        r = session.get(studweb_url() + result_page_url)
-
-        html = BeautifulSoup(r.content).prettify()
-
-    except Exception as e:
-        print_error('Failed parsing: ' + str(e))
-    finally:
-        try:
-            logout(session, parser, html)
-        except Exception as e:
-            print_error('Failed to log out:' + str(e))
-            raise e
-            # pass  # we might not be logged in
-
-    # Saved to be stored later on
+    products_html = open_page(session, parser)
+    assert products_html
+    html = products_html.prettify()
     latest_html = html
 
     return parser.parse_result_page_for_results(latest_html)
@@ -368,13 +243,8 @@ def store(html):
     f.close()
 
 
-def get_parser(studweb_hostname):
-    options = studweb_settings[studweb_hostname]
-
-    if not options:
-        raise Exception('No suitable page parser found.')
-
-    return PageParser(options['term_used_for_semester'], options['expand_link_text'])
+def get_parser():
+    return PageParser()
 
 
 def modification_date(filename):
@@ -444,7 +314,7 @@ def check_permissions():
 
     if mode & stat.S_IROTH or mode & stat.S_IRGRP:
         print("The settings file should only be readable by the user!")
-        print("Use `chmod 400 ~/.studweb.conf` to make it private")
+        print("Use `chmod 400 ~/.sunwind.conf` to make it private")
         sys.exit(1)
 
 
@@ -452,7 +322,7 @@ if __name__ == '__main__':
 
     import argparse
 
-    argument_parser = argparse.ArgumentParser(description="Retreive studweb results")
+    argument_parser = argparse.ArgumentParser(description="Retreive sunwind results")
     argument_parser.add_argument("--mail",
                                  help="Use the built-in mailer instead of relying on cron to mail the results",
                                  action="store_true")
@@ -474,7 +344,7 @@ if __name__ == '__main__':
 
         sys.exit(1)
 
-    new = new_results(get_parser(config['studweb']))
+    new = new_results(get_parser())
 
     if new:
         subject = u"Found new results since last check!"
